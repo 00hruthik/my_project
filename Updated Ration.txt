@@ -1,0 +1,363 @@
+// Libraries:
+#include<Adafruit_Fingerprint.h>
+/* Install: "Adafruit Fingerprint Sensor Library by Adafruit" */
+
+#include<HX711.h>
+/* Add Zip: https://github.com/bogde/HX711 */
+
+#include<LiquidCrystal_I2C.h>
+/* Add Zip: https://github.com/fdebrabander/Arduino-LiquidCrystal-I2C-library */
+
+#include <Servo.h>
+/* Built-In Library */
+
+
+// Pin Numbers:
+#define Button_Pin 2        // (Input) Connect to the Push Button
+#define Button_Pin2 3        // (Input) Connect to the Push Button
+#define Buzzer_Pin 4        // (Output) Connect to the Buzzer pin.
+
+#define Servo1_Pin 10         // Connect to Servo Motor
+#define DT1_Pin 6           // Connect to DT of HX711 Module
+#define SCK1_Pin 7          // Connect to SCK of HX711 Module
+
+#define Servo2_Pin 11         // Connect to Servo Motor
+#define DT2_Pin 8           // Connect to DT of HX711 Module
+#define SCK2_Pin 9          // Connect to SCK of HX711 Module
+
+
+// Configuration: LCD Display
+const uint8_t I2C_Addr = 0x27; // I2C Address
+const uint8_t lcdNumCols = 20; // LCD's number of columns
+const uint8_t lcdNumRows = 4;  // LCD's number of rows
+
+// Constants: Basic Configuration
+const long CalibFact1 = 454;       // Calibration Factor
+const long CalibFact2 = 506;       // Calibration Factor
+
+const int srv1ClosePos = 180;
+const int srv1OpenPos = 90;
+
+const int srv2ClosePos = 70;
+const int srv2OpenPos = 150;
+const unsigned long timeoutDuration = 15000;
+
+const String users[] = {"", "Mr.Chandan D", "Mr.Hruthik G", "Ms.Chitra  M", "Mr.Mokshith HM"};
+const String mobileNumber[] = {"", "9742014636", "9880954643", "9743282071", "8861116201"};
+const String RFID[] = {"", "4E00363B4E0D", "5100C7D386C3", "5100C8E6D5AA", "5100C830B019"};
+int amount[] = {0, 500, 500, 500, 500};
+
+const int ricePerMember = 250;
+const int ragiPerMember = 250;
+
+
+// Object - Using sensor without password
+Adafruit_Fingerprint objFP = Adafruit_Fingerprint(&Serial1);
+
+// Objects:
+LiquidCrystal_I2C lcd(I2C_Addr, lcdNumCols, lcdNumRows);
+HX711 scale1;
+HX711 scale2;
+Servo objServo1;
+Servo objServo2;
+
+// Variables:
+bool rationStatus[] = {false, false, false, false, false};
+unsigned long rationTime[] = {0, 0, 0, 0, 0};
+
+float weight;
+String msg;
+unsigned long millisB4Entry;
+String strRFID;
+
+void setup() {
+  // Define input pins:
+  pinMode(Button_Pin, INPUT);
+  pinMode(Button_Pin2, INPUT);
+
+  // Define output pins:
+  pinMode(Buzzer_Pin, OUTPUT);
+  digitalWrite(Buzzer_Pin, LOW);
+
+  ActuateServoPosition1(srv1ClosePos);
+  ActuateServoPosition2(srv2ClosePos);
+
+  /* Begin serial communication with Arduino and Arduino IDE (Serial Monitor) */
+  Serial.begin(9600);
+  Serial.println("Started");
+
+  /* Begin serial communication with Arduino and SIM Module */
+  Serial2.begin(9600);
+  delay(500);
+
+  /* Begin serial communication with Arduino and RFID Module */
+  Serial3.begin(9600);
+  delay(500);
+
+  /* Begin serial communication with Arduino and Fingerprint sensor */
+  objFP.begin(57600);
+  delay(500);
+
+  // Initialise the HX711:
+  scale1.begin(DT1_Pin, SCK1_Pin);
+  delay(1000);
+  scale1.tare(20);
+  scale1.set_scale(CalibFact1);
+
+  scale2.begin(DT2_Pin, SCK2_Pin);
+  delay(1000);
+  scale2.tare(20);
+  scale2.set_scale(CalibFact2);
+
+  // Initialise the LCD display:
+  lcd.init();                      // initialize the lcd 
+    lcd.backlight();
+    Serial.println("Verifying :(");
+  if (objFP.verifyPassword()) {
+    Serial.println("Found fingerprint sensor!");
+  } else {
+    Serial.println("Did not find fingerprint sensor :(");
+    lcd.print("Did not find fingerp");
+    lcd.print("-rint sensor!       ");
+    while (true);
+  }
+
+  printWelcomeMessage();
+}
+
+void loop() 
+{
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Place Your Finger");
+  bool isFound = isValidFingerprintDetected();
+  if (isFound && objFP.fingerID <= 4) 
+  {
+    Buzzer(1, 200, 0);
+    lcd.clear();
+    lcd.print("User:");
+    lcd.setCursor(0, 1);
+    lcd.setCursor(5, 0);
+    lcd.print(users[objFP.fingerID]);
+
+    if (rationStatus[objFP.fingerID] == false || (millis() - rationTime[objFP.fingerID]) > 60000) 
+    {
+      while (Serial3.available()) 
+      {
+        strRFID = Serial3.readString();
+        Serial.println(strRFID);
+      }
+
+      lcd.setCursor(0, 1);
+      lcd.print("Scan your RFID      ");
+      while (!Serial3.available());
+      strRFID = Serial3.readString();
+      Serial.println(strRFID);
+      if (strRFID != RFID[objFP.fingerID]) 
+      {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Invalid RFID!");
+        Buzzer(5, 200, 200);
+      } 
+      else 
+      {
+        lcd.setCursor(0, 1);
+        lcd.print("   RICE DISPENSER   ");
+        lcd.setCursor(0, 2);
+        lcd.print("Place the container ");
+        lcd.setCursor(0, 3);
+        lcd.print("and press the button");
+        while (!digitalRead(Button_Pin));
+        Buzzer(1, 200, 0);
+        scale1.tare(20);
+        lcd.setCursor(0, 2);
+        lcd.print("Rice is Dispensing..");
+        lcd.setCursor(0, 3);
+        lcd.print("                    ");
+        lcd.setCursor(0, 3);
+        lcd.print(ricePerMember);
+        lcd.print("gms");
+        lcd.setCursor(8, 3);
+        lcd.print("Wgt.:");
+        ShowWeight1For2Sec();
+
+        ActuateServoPosition1(srv1OpenPos);
+        do  {
+          weight = scale1.get_units();
+          lcd.setCursor(13, 3);
+          lcd.print("       ");
+          lcd.setCursor(13, 3);
+          lcd.print(weight, 0);
+          delay(100);
+        } while (weight < (ricePerMember - 50));
+        ActuateServoPosition1(srv1ClosePos);
+        Buzzer(1, 200, 0);
+        ShowWeight1For2Sec();
+
+        lcd.setCursor(0, 1);
+        lcd.print("   RAGI DISPENSER   ");
+        lcd.setCursor(0, 2);
+        lcd.print("Place the container ");
+        lcd.setCursor(0, 3);
+        lcd.print("and press the button");
+        while (!digitalRead(Button_Pin2));
+        Buzzer(1, 200, 0);
+        scale2.tare(20);
+        lcd.setCursor(0, 2);
+        lcd.print("Ragi is Dispensing..");
+        lcd.setCursor(0, 3);
+        lcd.print("                    ");
+        lcd.setCursor(0, 3);
+        lcd.print(ragiPerMember);
+        lcd.print("gms");
+        lcd.setCursor(8, 3);
+        lcd.print("Wgt.:");
+        ShowWeight2For2Sec();
+
+        ActuateServoPosition2(srv2OpenPos);
+        do  {
+          weight = scale2.get_units();
+          lcd.setCursor(13, 3);
+          lcd.print("       ");
+          lcd.setCursor(13, 3);
+          lcd.print(weight, 0);
+          delay(100);
+        } while (weight < ragiPerMember - 50);
+        ActuateServoPosition2(srv2ClosePos);
+        Buzzer(1, 200, 0);
+        ShowWeight2For2Sec();
+
+        lcd.setCursor(0, 1);
+        lcd.print("     COMPLETED      ");
+        lcd.setCursor(0, 2);
+        lcd.print("                    ");
+
+        amount[objFP.fingerID] -= 100;
+
+        lcd.setCursor(0, 3);
+        lcd.print("Sending SMS...      ");
+        if (mobileNumber[objFP.fingerID] != "") 
+        {
+          msg = "Dear Customer,\nYou have collected your ration.\n" + String(ricePerMember) + "gms Rice\n" + String(ragiPerMember) + "gms Ragi\nBalance = " + String(amount[objFP.fingerID]) + "Thank You.";
+          sendMessage(mobileNumber[objFP.fingerID], msg);
+        }
+        rationStatus[objFP.fingerID] = true;
+        rationTime[objFP.fingerID] = millis();
+        delay(1000);
+      }
+    } 
+    else 
+    {
+      lcd.setCursor(0, 1);
+      lcd.print("You have already col");
+      lcd.setCursor(0, 2);
+      lcd.print(" - lected your ration.");
+      Buzzer(3, 500, 500);
+    }
+  } 
+  else 
+  {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Invalid Fingerprint!");
+    Buzzer(5, 200, 200);
+  }
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("     Thank You      ");
+  delay(2000);
+}
+
+void ShowWeight1For2Sec() 
+{
+  millisB4Entry = millis();
+  while (millis() - millisB4Entry < 2000) 
+  {
+    weight = scale1.get_units();
+    weight = weight < 0 ? 0 : weight;
+    lcd.setCursor(13, 3);
+    lcd.print("       ");
+    lcd.setCursor(13, 3);
+    lcd.print(weight, 0);
+    delay(100);
+  }
+}
+
+void ShowWeight2For2Sec() 
+{
+  millisB4Entry = millis();
+  while (millis() - millisB4Entry < 2000) 
+  {
+    weight = scale2.get_units();
+    weight = weight < 0 ? 0 : weight;
+    lcd.setCursor(13, 3);
+    lcd.print("       ");
+    lcd.setCursor(13, 3);
+    lcd.print(weight, 0);
+    delay(100);
+  }
+}
+
+
+void printWelcomeMessage() 
+{
+  lcd.clear();
+  lcd.setCursor(6, 0);
+  lcd.print("WELCOME");
+  lcd.setCursor(3, 1);
+  lcd.print("RATION VENDING");
+  lcd.setCursor(6, 2);
+  lcd.print("MACHINE");
+  delay(2000);
+}
+
+bool isValidFingerprintDetected() 
+{
+  while (objFP.getImage() != FINGERPRINT_OK); /* Loop until the image is taken. */
+  if (objFP.image2Tz() != FINGERPRINT_OK) return false;
+  if (objFP.fingerFastSearch() != FINGERPRINT_OK)  return false;
+  return true;
+}
+
+void Buzzer(int n, int onDelay, int offDelay) 
+{
+  for (int i = 1; i <= n; i++) 
+  {
+    digitalWrite(Buzzer_Pin, HIGH);
+    delay(onDelay);
+    digitalWrite(Buzzer_Pin, LOW);
+    delay(offDelay);
+  }
+}
+
+void ActuateServoPosition1(int srvPos) 
+{
+  objServo1.attach(Servo1_Pin);
+  objServo1.write(srvPos);
+  delay(2000);
+  objServo1.detach();
+}
+
+void ActuateServoPosition2(int srvPos) 
+{
+  objServo2.attach(Servo2_Pin);
+  objServo2.write(srvPos);
+  delay(2000);
+  objServo2.detach();
+}
+
+void sendMessage(String mobileNumber, String msgContent) 
+{
+  // Sets the GSM Module in Text Mode:
+  Serial2.print("AT+CMGF=1\r");
+  delay(500);
+
+  String cmdSetMobileNumber = "AT+CMGS=\"+91" + mobileNumber + "\"\r";
+  Serial2.print(cmdSetMobileNumber);
+  delay(500);
+
+  Serial2.print(msgContent);
+  Serial2.write(26);              // ASCII code of CTRL+Z
+  delay(500);
+}
